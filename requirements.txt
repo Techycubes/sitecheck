@@ -1,0 +1,5 @@
+requests
+dnspython
+
+# For running the test suite (tests/), also install pytest:
+#   pip install pytest
