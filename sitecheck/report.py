@@ -68,7 +68,88 @@ def build_report(domain, results):
            makes a handy sort key.
         4. Tally ``counts`` per severity and return the report dict.
     """
-    raise NotImplementedError("build_report: see TODO in this file")
+    findings = []
+
+    # --- exposed files: any served sensitive path is high severity -------
+    exposed = results.get("exposed_files", {})
+    if not exposed.get("error"):
+        for item in exposed.get("exposed", []):
+            path = item.get("path", "?")
+            code = item.get("status_code", "?")
+            findings.append({
+                "severity": "high",
+                "check": "exposed_files",
+                "title": f"Exposed file: {path}",
+                "detail": f"Returned HTTP {code}",
+            })
+
+    # --- TLS: invalid/expired cert is high, near-expiry is medium --------
+    tls = results.get("tls", {})
+    if not tls.get("error"):
+        if tls.get("valid") is False:
+            findings.append({
+                "severity": "high",
+                "check": "tls",
+                "title": "Invalid TLS certificate",
+                "detail": tls.get("error") or "Certificate failed verification.",
+            })
+        else:
+            days = tls.get("days_until_expiry")
+            if isinstance(days, int) and days < 30:
+                findings.append({
+                    "severity": "medium",
+                    "check": "tls",
+                    "title": "TLS certificate expiring soon",
+                    "detail": f"{days} day(s) until expiry.",
+                })
+
+    # --- security headers: each missing recommended header is medium -----
+    headers = results.get("headers", {})
+    if not headers.get("error"):
+        for name in headers.get("missing", []):
+            findings.append({
+                "severity": "medium",
+                "check": "headers",
+                "title": f"Missing header: {name}",
+                "detail": "Recommended security header not present in the response.",
+            })
+
+    # --- email auth DNS: missing SPF (medium) / DMARC (low) --------------
+    dns = results.get("dns", {})
+    if not dns.get("error"):
+        if dns.get("spf", {}).get("present") is False:
+            findings.append({
+                "severity": "medium",
+                "check": "dns",
+                "title": "Missing SPF record",
+                "detail": "No v=spf1 TXT record found on the domain.",
+            })
+        if dns.get("dmarc", {}).get("present") is False:
+            findings.append({
+                "severity": "low",
+                "check": "dns",
+                "title": "Missing DMARC record",
+                "detail": "No v=DMARC1 TXT record found at _dmarc.<domain>.",
+            })
+
+    # --- security.txt: informational if absent ---------------------------
+    sec = results.get("security_txt", {})
+    if not sec.get("error") and sec.get("present") is False:
+        findings.append({
+            "severity": "low",
+            "check": "security_txt",
+            "title": "No security.txt published",
+            "detail": "Site does not expose /.well-known/security.txt (RFC 9116).",
+        })
+
+    # Highest severity first; stable within a severity band.
+    findings.sort(key=lambda f: SEVERITY_ORDER.index(f["severity"]))
+
+    counts = {sev: 0 for sev in SEVERITY_ORDER}
+    for finding in findings:
+        counts[finding["severity"]] += 1
+
+    return {"domain": domain, "findings": findings, "counts": counts}
 
 
 def save_report(domain, report, directory, fmt):

@@ -13,6 +13,9 @@ __pycache__/
 reports/
 outbox/
 
+# Private build notes -- kept local, never pushed
+WALKTHROUGH.md
+
 # Editor / OS cruft
 .vscode/
 .idea/
