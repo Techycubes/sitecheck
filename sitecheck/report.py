@@ -71,77 +71,130 @@ def build_report(domain, results):
     """
     findings = []
 
+    def add(severity, category, check, title, detail):
+        findings.append({
+            "severity": severity,
+            "category": category,
+            "check": check,
+            "title": title,
+            "detail": detail,
+        })
+
+    # ===================== SECURITY ======================================
+
     # --- exposed files: any served sensitive path is high severity -------
     exposed = results.get("exposed_files", {})
     if not exposed.get("error"):
         for item in exposed.get("exposed", []):
             path = item.get("path", "?")
             code = item.get("status_code", "?")
-            findings.append({
-                "severity": "high",
-                "check": "exposed_files",
-                "title": f"Exposed file: {path}",
-                "detail": f"Returned HTTP {code}",
-            })
+            add("high", "security", "exposed_files",
+                f"Exposed file: {path}", f"Returned HTTP {code}")
 
     # --- TLS: invalid/expired cert is high, near-expiry is medium --------
     tls = results.get("tls", {})
     if not tls.get("error"):
         if tls.get("valid") is False:
-            findings.append({
-                "severity": "high",
-                "check": "tls",
-                "title": "Invalid TLS certificate",
-                "detail": tls.get("error") or "Certificate failed verification.",
-            })
+            add("high", "security", "tls", "Invalid TLS certificate",
+                tls.get("error") or "Certificate failed verification.")
         else:
             days = tls.get("days_until_expiry")
             if isinstance(days, int) and days < 30:
-                findings.append({
-                    "severity": "medium",
-                    "check": "tls",
-                    "title": "TLS certificate expiring soon",
-                    "detail": f"{days} day(s) until expiry.",
-                })
+                add("medium", "security", "tls",
+                    "TLS certificate expiring soon",
+                    f"{days} day(s) until expiry.")
 
     # --- security headers: each missing recommended header is medium -----
     headers = results.get("headers", {})
     if not headers.get("error"):
         for name in headers.get("missing", []):
-            findings.append({
-                "severity": "medium",
-                "check": "headers",
-                "title": f"Missing header: {name}",
-                "detail": "Recommended security header not present in the response.",
-            })
+            add("medium", "security", "headers", f"Missing header: {name}",
+                "Recommended security header not present in the response.")
 
     # --- email auth DNS: missing SPF (medium) / DMARC (low) --------------
     dns = results.get("dns", {})
     if not dns.get("error"):
         if dns.get("spf", {}).get("present") is False:
-            findings.append({
-                "severity": "medium",
-                "check": "dns",
-                "title": "Missing SPF record",
-                "detail": "No v=spf1 TXT record found on the domain.",
-            })
+            add("medium", "security", "dns", "Missing SPF record",
+                "No v=spf1 TXT record found on the domain.")
         if dns.get("dmarc", {}).get("present") is False:
-            findings.append({
-                "severity": "low",
-                "check": "dns",
-                "title": "Missing DMARC record",
-                "detail": "No v=DMARC1 TXT record found at _dmarc.<domain>.",
-            })
+            add("low", "security", "dns", "Missing DMARC record",
+                "No v=DMARC1 TXT record found at _dmarc.<domain>.")
 
     # --- security.txt: informational if absent ---------------------------
     sec = results.get("security_txt", {})
     if not sec.get("error") and sec.get("present") is False:
-        findings.append({
-            "severity": "low",
-            "check": "security_txt",
-            "title": "No security.txt published",
-            "detail": "Site does not expose /.well-known/security.txt (RFC 9116).",
-        })
+        add("low", "security", "security_txt", "No security.txt published",
+            "Site does not expose /.well-known/security.txt (RFC 9116).")
+
+    # ========================= SEO =======================================
+
+    # --- title & meta description ----------------------------------------
+    meta = results.get("meta", {})
+    if not meta.get("error"):
+        if not meta.get("title"):
+            add("medium", "seo", "meta", "Missing <title>",
+                "The page has no <title> element.")
+        else:
+            tl = meta.get("title_length", 0)
+            if tl < 30 or tl > 60:
+                add("low", "seo", "meta", "Title length outside 30-60 chars",
+                    f"Title is {tl} characters.")
+        if not meta.get("meta_description"):
+            add("medium", "seo", "meta", "Missing meta description",
+                "No <meta name=\"description\"> on the page.")
+        else:
+            dl = meta.get("description_length", 0)
+            if dl < 120 or dl > 160:
+                add("low", "seo", "meta",
+                    "Meta description outside 120-160 chars",
+                    f"Description is {dl} characters.")
+
+    # --- robots.txt & sitemap --------------------------------------------
+    rs = results.get("robots_sitemap", {})
+    if not rs.get("error"):
+        robots = rs.get("robots", {})
+        if robots.get("blocks_all"):
+            add("high", "seo", "robots_sitemap",
+                "robots.txt blocks all crawlers",
+                "A blanket 'Disallow: /' for User-agent: * stops indexing.")
+        elif not robots.get("present"):
+            add("low", "seo", "robots_sitemap", "No robots.txt",
+                "Site does not serve /robots.txt.")
+        if not rs.get("sitemap", {}).get("present"):
+            add("low", "seo", "robots_sitemap", "No XML sitemap found",
+                "Neither a robots.txt Sitemap: directive nor /sitemap.xml.")
+
+    # --- indexability & canonical ----------------------------------------
+    idx = results.get("indexability", {})
+    if not idx.get("error"):
+        if idx.get("noindex_meta") or idx.get("noindex_header"):
+            add("high", "seo", "indexability", "Page set to noindex",
+                "A meta robots tag or X-Robots-Tag header blocks indexing.")
+        if not idx.get("canonical"):
+            add("low", "seo", "indexability", "No canonical URL",
+                "No <link rel=\"canonical\"> on the page.")
+        if not idx.get("html_lang"):
+            add("low", "seo", "indexability", "No <html lang> attribute",
+                "Declaring the page language helps search engines.")
+        if not idx.get("viewport"):
+            add("low", "seo", "indexability", "No viewport meta",
+                "Missing <meta name=\"viewport\"> (mobile-friendliness).")
+
+    # --- social & structured data ----------------------------------------
+    soc = results.get("social", {})
+    if not soc.get("error"):
+        missing_og = [k for k, v in soc.get("open_graph", {}).items() if not v]
+        if missing_og:
+            add("low", "seo", "social",
+                "Missing Open Graph tags",
+                f"Absent: {', '.join(missing_og)}.")
+        if not soc.get("twitter_card"):
+            add("low", "seo", "social", "No twitter:card meta",
+                "No Twitter Card markup for rich link previews.")
+        if not soc.get("structured_data_count"):
+            add("low", "seo", "social", "No structured data",
+                "No JSON-LD (<script type=\"application/ld+json\">) found.")
 
     # Highest severity first; stable within a severity band.
     findings.sort(key=lambda f: SEVERITY_ORDER.index(f["severity"]))
@@ -197,17 +250,21 @@ def save_report(domain, report, directory, fmt):
     raise ValueError(f"Unsupported format: {fmt!r} (expected 'md' or 'json')")
 
 
+# Human-readable section titles, in the order they should appear.
+CATEGORY_TITLES = (("security", "Security"), ("seo", "SEO"))
+
+
 def _render_markdown(report):
-    """Render a built report dict as a readable Markdown document."""
+    """Render a built report dict as Markdown, grouped by category."""
     domain = report.get("domain", "?")
     counts = report.get("counts", {})
     findings = report.get("findings", [])
 
     lines = [
-        f"# Security report: {domain}",
+        f"# sitecheck report: {domain}",
         "",
         (
-            f"**Findings:** {counts.get('high', 0)} high · "
+            f"**Total findings:** {counts.get('high', 0)} high · "
             f"{counts.get('medium', 0)} medium · {counts.get('low', 0)} low"
         ),
         "",
@@ -217,13 +274,32 @@ def _render_markdown(report):
         lines.append("_No findings._")
         return "\n".join(lines) + "\n"
 
-    lines.append("| Severity | Check | Finding | Detail |")
-    lines.append("| --- | --- | --- | --- |")
-    for finding in findings:
-        sev = finding.get("severity", "")
-        check = finding.get("check", "")
-        title = str(finding.get("title", "")).replace("|", "\\|")
-        detail = str(finding.get("detail", "")).replace("|", "\\|")
-        lines.append(f"| {sev} | {check} | {title} | {detail} |")
+    # Build the category order: known categories first, then any extras.
+    known = [cat for cat, _ in CATEGORY_TITLES]
+    titles = dict(CATEGORY_TITLES)
+    extra = [f.get("category", "other") for f in findings if f.get("category") not in known]
+    order = known + sorted(set(extra))
 
-    return "\n".join(lines) + "\n"
+    for cat in order:
+        group = [f for f in findings if f.get("category", "other") == cat]
+        if not group:
+            continue
+        high = sum(1 for f in group if f.get("severity") == "high")
+        medium = sum(1 for f in group if f.get("severity") == "medium")
+        low = sum(1 for f in group if f.get("severity") == "low")
+
+        lines.append(f"## {titles.get(cat, cat.title())}")
+        lines.append("")
+        lines.append(f"_{high} high · {medium} medium · {low} low_")
+        lines.append("")
+        lines.append("| Severity | Check | Finding | Detail |")
+        lines.append("| --- | --- | --- | --- |")
+        for finding in group:
+            sev = finding.get("severity", "")
+            check = finding.get("check", "")
+            title = str(finding.get("title", "")).replace("|", "\\|")
+            detail = str(finding.get("detail", "")).replace("|", "\\|")
+            lines.append(f"| {sev} | {check} | {title} | {detail} |")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"

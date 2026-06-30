@@ -115,3 +115,52 @@ def test_build_report_flags_exposed_file():
     ]
     assert env_findings, "expected a finding for the exposed /.env file"
     assert env_findings[0]["severity"] == "high"
+
+
+# --- SEO fake results, shaped like the SEO check functions' output. ----------
+
+# A page with no <title> and a noindex meta robots tag.
+FAKE_RESULTS_SEO = {
+    "meta": {
+        "url": "https://example.com",
+        "title": None,
+        "title_length": 0,
+        "meta_description": "A perfectly fine description that sits within the "
+                            "recommended one-hundred-and-twenty to one-sixty.",
+        "description_length": 130,
+        "error": None,
+    },
+    "indexability": {
+        "noindex_meta": True,
+        "noindex_header": False,
+        "canonical": "https://example.com/",
+        "html_lang": "en",
+        "viewport": "width=device-width, initial-scale=1",
+        "error": None,
+    },
+}
+
+
+def test_build_report_flags_missing_title():
+    """A missing <title> should surface as an SEO-category finding."""
+    report = build_report("example.com", FAKE_RESULTS_SEO)
+
+    title_findings = [
+        f for f in report["findings"]
+        if "title" in str(f.get("title", "")).lower()
+    ]
+    assert title_findings, "expected a finding for the missing <title>"
+    assert title_findings[0]["category"] == "seo"
+
+
+def test_build_report_flags_noindex_high():
+    """A noindex page should surface as a high-severity SEO finding."""
+    report = build_report("example.com", FAKE_RESULTS_SEO)
+
+    noindex_findings = [
+        f for f in report["findings"]
+        if "noindex" in str(f.get("title", "")).lower()
+    ]
+    assert noindex_findings, "expected a finding for the noindex page"
+    assert noindex_findings[0]["severity"] == "high"
+    assert noindex_findings[0]["category"] == "seo"

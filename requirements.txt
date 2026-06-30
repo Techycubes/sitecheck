@@ -1,5 +1,6 @@
 requests
 dnspython
+beautifulsoup4
 
 # For running the test suite (tests/), also install pytest:
 #   pip install pytest
