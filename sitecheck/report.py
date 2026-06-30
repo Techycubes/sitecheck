@@ -5,6 +5,7 @@ target. Implement ``build_report`` until those tests pass, then implement
 ``save_report``.
 """
 
+import json
 from pathlib import Path
 
 # Severity ordering, highest first. Use these strings as your severity values
@@ -177,4 +178,52 @@ def save_report(domain, report, directory, fmt):
         4. Write the file (UTF-8) and return its Path.
         5. Raise a clear ``ValueError`` for an unsupported ``fmt``.
     """
-    raise NotImplementedError("save_report: see TODO in this file")
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    # Sanitize the domain so nothing in it can escape the output directory.
+    safe = "".join(c if (c.isalnum() or c in "-._") else "_" for c in domain)
+    safe = safe.strip("._") or "report"
+
+    if fmt == "json":
+        path = directory / f"{safe}.json"
+        path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return path
+    if fmt == "md":
+        path = directory / f"{safe}.md"
+        path.write_text(_render_markdown(report), encoding="utf-8")
+        return path
+
+    raise ValueError(f"Unsupported format: {fmt!r} (expected 'md' or 'json')")
+
+
+def _render_markdown(report):
+    """Render a built report dict as a readable Markdown document."""
+    domain = report.get("domain", "?")
+    counts = report.get("counts", {})
+    findings = report.get("findings", [])
+
+    lines = [
+        f"# Security report: {domain}",
+        "",
+        (
+            f"**Findings:** {counts.get('high', 0)} high · "
+            f"{counts.get('medium', 0)} medium · {counts.get('low', 0)} low"
+        ),
+        "",
+    ]
+
+    if not findings:
+        lines.append("_No findings._")
+        return "\n".join(lines) + "\n"
+
+    lines.append("| Severity | Check | Finding | Detail |")
+    lines.append("| --- | --- | --- | --- |")
+    for finding in findings:
+        sev = finding.get("severity", "")
+        check = finding.get("check", "")
+        title = str(finding.get("title", "")).replace("|", "\\|")
+        detail = str(finding.get("detail", "")).replace("|", "\\|")
+        lines.append(f"| {sev} | {check} | {title} | {detail} |")
+
+    return "\n".join(lines) + "\n"

@@ -45,4 +45,54 @@ def check_security_txt(domain, user_agent):
     contacts happens elsewhere (report/CLI layer) and only ever writes a file
     to ``outbox/`` for you to review and send manually.
     """
-    raise NotImplementedError("check_security_txt: see TODO in this file")
+    headers = {"User-Agent": user_agent}
+
+    for path in (WELL_KNOWN_PATH, LEGACY_PATH):
+        url = f"https://{domain}{path}"
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+        except requests.exceptions.RequestException as exc:
+            return {
+                "url": url,
+                "present": False,
+                "contacts": [],
+                "fields": {},
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+        if response.status_code != 200 or not response.text.strip():
+            continue  # try the legacy path, then give up
+
+        # Parse "Field: value" lines; '#' comments and blanks are ignored;
+        # field names are case-insensitive; Contact order is significant.
+        contacts = []
+        fields = {}
+        for line in response.text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            name, sep, value = line.partition(":")
+            if not sep:
+                continue
+            name = name.strip().lower()
+            value = value.strip()
+            if name == "contact":
+                contacts.append(value)
+            else:
+                fields.setdefault(name, value)
+
+        return {
+            "url": url,
+            "present": True,
+            "contacts": contacts,
+            "fields": fields,
+            "error": None,
+        }
+
+    return {
+        "url": f"https://{domain}{WELL_KNOWN_PATH}",
+        "present": False,
+        "contacts": [],
+        "fields": {},
+        "error": None,
+    }

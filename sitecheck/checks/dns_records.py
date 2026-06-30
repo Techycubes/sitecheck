@@ -1,6 +1,7 @@
 """Check a domain's email-authentication DNS records (SPF and DMARC)."""
 
-import dns.resolver  # noqa: F401  (you'll use this in your implementation)
+import dns.resolver
+import dns.exception
 
 
 def check_dns(domain):
@@ -42,4 +43,39 @@ def check_dns(domain):
     Note: read-only DNS lookups only. No zone transfers, no brute-forcing
     subdomains.
     """
-    raise NotImplementedError("check_dns: see TODO in this file")
+    result = {
+        "domain": domain,
+        "spf": {"present": False, "record": None},
+        "dmarc": {"present": False, "record": None},
+        "error": None,
+    }
+
+    def _find_txt(name, marker):
+        """Return the first TXT record (decoded) starting with marker, or None.
+
+        Raises on genuine resolver failures; returns None when the name simply
+        has no such record (NXDOMAIN / NoAnswer).
+        """
+        try:
+            answers = dns.resolver.resolve(name, "TXT")
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            return None
+        for rdata in answers:
+            # TXT data comes back as one or more byte-string chunks.
+            txt = b"".join(rdata.strings).decode(errors="replace")
+            if txt.lower().startswith(marker):
+                return txt
+        return None
+
+    try:
+        spf = _find_txt(domain, "v=spf1")
+        if spf is not None:
+            result["spf"] = {"present": True, "record": spf}
+
+        dmarc = _find_txt("_dmarc." + domain, "v=dmarc1")
+        if dmarc is not None:
+            result["dmarc"] = {"present": True, "record": dmarc}
+    except (dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+
+    return result

@@ -56,4 +56,35 @@ def check_exposed_files(domain, user_agent):
     downloading of the files, no exploitation of anything found. Finding a file
     means reporting it, nothing more.
     """
-    raise NotImplementedError("check_exposed_files: see TODO in this file")
+    base_url = f"https://{domain}"
+    exposed = []
+    errors = []
+
+    for path in SENSITIVE_PATHS:
+        url = base_url + path
+        try:
+            # HEAD is enough -- we only need the status line, not the body.
+            # allow_redirects=False so a 301/302 to a login/homepage isn't
+            # mistaken for the path itself being served.
+            response = requests.head(
+                url,
+                headers={"User-Agent": user_agent},
+                timeout=10,
+                allow_redirects=False,
+            )
+        except requests.exceptions.RequestException as exc:
+            errors.append({"path": path, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+
+        if response.status_code == 200:
+            # NOTE: with HEAD we can't see the body, so we can't rule out a
+            # server that soft-404s with a 200. We trust the status code here.
+            exposed.append({"path": path, "status_code": response.status_code})
+
+    return {
+        "base_url": base_url,
+        "exposed": exposed,
+        "checked": list(SENSITIVE_PATHS),
+        "errors": errors,
+        "error": None,
+    }

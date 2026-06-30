@@ -48,4 +48,34 @@ def check_headers(domain, user_agent):
 
     Note: this is a passive check. One GET, no fuzzing, no header injection.
     """
-    raise NotImplementedError("check_headers: see TODO in this file")
+    url = f"https://{domain}"
+    try:
+        response = requests.get(
+            url, headers={"User-Agent": user_agent}, timeout=10
+        )
+    except requests.exceptions.RequestException as exc:
+        return {
+            "url": url,
+            "status_code": None,
+            "present": {},
+            "missing": list(SECURITY_HEADERS),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    # response.headers is a case-insensitive dict, so membership/lookup by the
+    # canonical names works regardless of how the server cased them.
+    present = {}
+    missing = []
+    for name in SECURITY_HEADERS:
+        if name in response.headers:
+            present[name] = response.headers[name]
+        else:
+            missing.append(name)
+
+    return {
+        "url": response.url,  # final URL after any redirects
+        "status_code": response.status_code,
+        "present": present,
+        "missing": missing,
+        "error": None,
+    }
